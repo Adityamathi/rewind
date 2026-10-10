@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Rewind — time-travel debugger you question by voice</title>
+<style>
+:root{--bg:#0b0e14;--panel:#141a26;--line:#233;--txt:#e8eef7;--mut:#8b95a7;--acc:#6ee7ff;--acc2:#a78bfa;--good:#34d399;--bad:#f87171;--warn:#fbbf24}
+[data-theme=light]{--bg:#f6f7fb;--panel:#fff;--line:#e3e7ef;--txt:#141a26;--mut:#5b6577;--acc:#0e7490;--acc2:#6d28d9}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+.logo{font-weight:800;font-size:18px}.logo span{color:var(--acc)}
+#q{flex:1;display:flex;gap:8px}
+#q input{flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:15px}
+button{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--txt);cursor:pointer;font-weight:600}
+button.primary{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#08131a;border:none}
+button:disabled{opacity:.5}
+main{display:grid;grid-template-columns:1.2fr .8fr;gap:12px;padding:12px 16px;max-width:1200px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+#code{font-family:ui-monospace,Consolas,monospace;font-size:13px;overflow:auto;max-height:56vh;white-space:pre}
+.cline{display:flex;gap:10px;padding:1px 8px;border-radius:6px;border-left:4px solid transparent}
+.cline.cur{background:rgba(110,231,255,.12);border-left-color:var(--acc)}
+.cline.chain0{border-left-color:var(--bad)}.cline.chain1{border-left-color:var(--warn)}.cline.chain2{border-left-color:var(--acc2)}
+.cline .ln{color:var(--mut);min-width:34px;text-align:right;user-select:none}
+.badge{display:inline-block;min-width:20px;text-align:center;border-radius:20px;background:var(--bad);color:#fff;font-size:11px;font-weight:800;margin-left:8px;padding:0 6px;cursor:pointer}
+#timeline{grid-column:1/-1}
+input[type=range]{width:100%}
+#vars{font-family:ui-monospace,monospace;font-size:12.5px;max-height:30vh;overflow:auto}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.kv b{color:var(--acc)}
+#answer{white-space:pre-wrap}
+.chainitem{border:1px solid var(--line);border-radius:10px;padding:8px;margin:8px 0;cursor:pointer}
+.chainitem:hover{border-color:var(--acc)}
+.chainitem.root{border-color:var(--bad);box-shadow:0 0 0 1px var(--bad)}
+.mut{color:var(--mut);font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#status{color:var(--mut);font-size:12px;min-height:18px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.flash{animation:fl .8s}@keyframes fl{from{background:rgba(251,191,36,.5)}to{transparent}}
+</style>
+</head>
+<body>
+<header>
+<div class="logo">⏪ <span>Rewind</span></div>
+<div id="q">
+<input id="qin" placeholder="🎙 Why is the total negative?  (press mic or Enter)" autofocus/>
+<button id="mic" title="Voice input (Web Speech API)">🎙</button>
+<button id="ask" class="primary">Ask</button>
+</div>
+<button id="theme" title="theme">🌙</button>
+</header>
+<main>
+<div class="card">
+<div class="row"><b>Source</b><span class="mut" id="meta"></span><span style="flex:1"></span><span class="mut" id="stepLbl"></span></div>
+<div id="code"></div>
+</div>
+<div class="card">
+<b>Answer</b>
+<div id="status"></div>
+<div id="answer" class="mut">Run <code>rewind run app.py</code>, then <code>rewind serve trace.db</code>, and ask why.</div>
+<div id="chain"></div>
+<b>Variables @ step</b>
+<div id="vars"></div>
+</div>
+<div class="card" id="timeline">
+<div class="row"><b>Timeline</b><input type="range" id="scrub" min="1" max="1" value="1"/><span id="ticks" class="mut"></span></div>
+<div class="mut" id="out"></div>
+</div>
+</main>
+<script>
+let LINES=[],MAXSTEP=1,CHAIN=[],SRC=[];
+const $=id=>document.getElementById(id);
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+async function init(){
+ const m=await j('/api/meta');MAXSTEP=m.steps||1;
+ $('meta').textContent=`${m.script||''} · ${MAXSTEP} steps`+(m.exception?` · 💥 ${m.exception.type}`:'');
+ const s=await j('/api/source');SRC=s.lines||[];renderCode(1);
+ $('scrub').max=MAXSTEP;$('scrub').value=MAXSTEP;
+ await gotoStep(MAXSTEP);
+ const outs=await j('/api/meta'); // warm
+}
+function renderCode(cur){
+ const c=$('code');c.innerHTML='';
+ const marks={};CHAIN.forEach((n,i)=>{marks[n.line]=marks[n.line]||[];marks[n.line].push({i,n})});
+ SRC.forEach(({line,text})=>{
+  const d=document.createElement('div');d.className='cline'+(line===cur?' cur':'');d.id='L'+line;
+  if(marks[line]){d.classList.add('chain'+(marks[line][0].i%3));}
+  const ln=document.createElement('span');ln.className='ln';ln.textContent=line;
+  const tx=document.createElement('span');tx.textContent=text||' ';
+  d.appendChild(ln);d.appendChild(tx);
+  (marks[line]||[]).forEach(({i,n})=>{const b=document.createElement('span');b.className='badge';b.textContent='●'+(i+1);b.title=`step ${n.step}: ${n.var} ${n.old} → ${n.new}`;b.onclick=ev=>{ev.stopPropagation();gotoStep(n.step)};d.appendChild(b)});
+  d.onclick=()=>lineToStep(line);
+  c.appendChild(d);
+ });
+}
+async function lineToStep(line){
+ // jump scrubber to a step executing this line (approx: first chain node else search range)
+ const r=await j(`/api/range?frm=1&to=${MAXSTEP}`);
+ const hit=(r.steps||[]).find(s=>s.line===line);
+ if(hit)gotoStep(hit.step);
+}
+async function gotoStep(n){
+ n=Math.max(1,Math.min(MAXSTEP,n));$('scrub').value=n;
+ const s=await j('/api/step/'+n);
+ $('stepLbl').textContent=`step ${n} · line ${s.line||'?'}`;
+ renderCode(s.line||1);
+ const el=$('L'+(s.line||1));if(el)el.scrollIntoView({block:'nearest'});
+ const v=$('vars');v.innerHTML='';
+ Object.entries(s.values||{}).forEach(([k,val])=>{const d=document.createElement('div');d.className='kv';d.innerHTML='';const a=document.createElement('span');a.innerHTML='<b></b>';a.firstChild.textContent=k;const b=document.createElement('span');b.textContent=val;if(String(val).startsWith('-'))b.style.color='var(--bad)';d.appendChild(a);d.appendChild(b);v.appendChild(d)});
+ const t=document.querySelector(`.cline.cur`);if(t){t.classList.remove('flash');void t.offsetWidth;t.classList.add('flash')}
+}
+$('scrub').oninput=e=>gotoStep(+e.target.value);
+async function doAsk(){
+ const q=$('qin').value.trim();if(!q)return;
+ $('ask').disabled=true;$('status').textContent='🛰 checking output… history… causal chain…';$('answer').textContent='';
+ try{
+  const r=await j('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
+  $('answer').textContent=r.answer||'(no answer)';
+  CHAIN=r.chain||[];$('chain').innerHTML='';
+  CHAIN.forEach((n,i)=>{const d=document.createElement('div');d.className='chainitem'+(n.step===r.root_cause_step?' root':'');d.innerHTML=`<b> ${i+1}. step ${n.step} · line ${n.line}</b> · <code></code><div class=mut></div>`;d.querySelector('code').textContent=`${n.var}: ${n.old} → ${n.new}`;d.querySelector('.mut').textContent=(SRC.find(s=>s.line===n.line)||{text:''}).text+(n.step===r.root_cause_step?'  ← ROOT CAUSE':'');d.onclick=()=>gotoStep(n.step);$('chain').appendChild(d)});
+  $('ticks').textContent='◆ '+CHAIN.map(n=>n.step).join(' · ');
+  if(r.root_cause_step)await gotoStep(r.root_cause_step);
+  renderCode((await j('/api/step/'+$('scrub').value)).line||1);
+  $('status').textContent=`✓ grounded in ${CHAIN.length} step(s) · confidence ${r.confidence??''} · ${r.mode||'llm'}`;
+ }catch(e){$('status').textContent='error: '+e}
+ $('ask').disabled=false;
+}
+$('ask').onclick=doAsk;$('qin').onkeydown=e=>{if(e.key==='Enter')doAsk()};
+// mic fallback (Wispr Flow users just dictate into the box with their hotkey)
+$('mic').onclick=()=>{
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){$('status').textContent='No browser speech API — press your Wispr Flow hotkey and speak into the box.';$('qin').focus();return}
+ const r=new SR();r.lang='en-US';$('status').textContent='🎙 listening…';
+ r.onresult=e=>{$('qin').value=e.results[0][0].transcript;doAsk()};
+ r.onerror=()=>$('status').textContent='mic error — type or use Wispr Flow instead';
+ r.start();
+};
+$('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='light'?'':'light';$('theme').textContent=h.dataset.theme==='light'?'☀️':'🌙'};
+init();
+</script>
+</body>
+</html>

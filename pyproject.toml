@@ -1,0 +1,30 @@
+[project]
+name = "rewind"
+version = "0.1.0"
+description = "Rewind: a time-travel debugger you question by voice"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rewind = "rewind.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rewind*"]
+
+[tool.vercel]
+entrypoint = "api.index:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

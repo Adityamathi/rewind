@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{tests/**,**/*.test.py,demos/**,Whispr Flow Shortlisting Task.docx,REWIND_ARCHITECTURE.md,trace.db,trace_page.db,trace_mut.db,.pytest_cache/**,rewind.egg-info/**,**/__pycache__/**}"
+    }
+  }
+}

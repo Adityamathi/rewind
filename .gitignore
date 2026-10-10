@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+# ...except the bundled Vercel demo trace
+!demo_trace.db
+.venv/
+dist/
+build/
+*.egg-info/
